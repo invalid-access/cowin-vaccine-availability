@@ -10,7 +10,7 @@ CENTER_FILTER = os.environ.get("CENTERS", None)
 
 # Config on what ages to notify for
 CHECK_FOR_18_YRS = os.environ.get("CHECK_FOR_18_YRS", True)
-CHECK_FOR_45_YRS = os.environ.get("CHECK_FOR_18_YRS", True)
+CHECK_FOR_45_YRS = os.environ.get("CHECK_FOR_45_YRS", True)
 
 # Slack config
 SLACK_ACCESS_TOKEN = os.environ.get("SLACK_ACCESS_TOKEN", None)

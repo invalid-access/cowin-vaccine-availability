@@ -12,3 +12,13 @@ python slot_availability.py
 
 deactivate
 ```
+
+To figure out `district_id` you can edit the script and run it to fetch all the states and then all the districts.
+
+```
+# Prints all states (id and name map) - Useful to fetch state_id to list districts
+get_all_states()
+
+Prints all districts in state 21 (id and name map)
+get_all_districts_for_state(21)
+```
