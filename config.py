@@ -3,8 +3,10 @@ import os
 NOTIFIED_FOR_18_PLUS = False
 NOTIFIED_FOR_45_PLUS = False
 
-# ZIPCODE
-ZIPCODE = os.environ.get("ZIPCODE", "400706")
+# Search Parameters
+ZIPCODE = os.environ.get("ZIPCODE", None)
+DISTRICT_ID = os.environ.get("DISTRICT_ID", None)
+CENTER_FILTER = os.environ.get("CENTERS", None)
 
 # Config on what ages to notify for
 CHECK_FOR_18_YRS = os.environ.get("CHECK_FOR_18_YRS", True)

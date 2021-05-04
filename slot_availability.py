@@ -11,18 +11,58 @@ import slack_utils
 BASE_URL = "https://cdn-api.co-vin.in"
 
 
-def get_slots_for_pincode(url, pincode, curr_date):
+def make_covin_request(request_url, params=None) -> requests.Response:
+    num_retries = 3
     response = requests.get(
-        url,
-        params={"pincode": pincode, "date": curr_date},
+        request_url,
+        params=params,
         headers={"Accept": "application/json", "Accept-Language": "en-US"}
     )
+
+    while num_retries > 0:
+        num_retries -= 1
+        if response.ok:
+            break
+
     response.raise_for_status()
+    return response
+
+
+def get_all_states():
+    relative_url = "api/v2/admin/location/states"
+    request_url = urljoin(BASE_URL, relative_url)
+    response = make_covin_request(request_url)
+    resp_json = response.json()
+    states_dict = {
+        state["state_id"]: state["state_name"]
+        for state in resp_json["states"]
+    }
+
+    print("-------- STATES MAP --------")
+    for key, value in states_dict.items():
+        print(f"{key} ->> {value}")
+
+
+def get_all_districts_for_state(state_id):
+    relative_url = f"api/v2/admin/location/districts/{state_id}"
+    request_url = urljoin(BASE_URL, relative_url)
+    response = make_covin_request(request_url)
+    resp_json = response.json()
+    districts_dict = {
+        district["district_id"]: district["district_name"]
+        for district in resp_json["districts"]
+    }
+    print("-------- DISTRICTS MAP --------")
+    for key, value in districts_dict.items():
+        print(f"{key} ->> {value}")
+
+
+def parse_slot_results(response: requests.Response):
     resp_json = response.json()
     centers = resp_json.get("centers")
     if not centers:
-        print("No centers found in the given pincode")
-        sys.exit(-1)
+        print("No centers found")
+        return
 
     centers_with_available_slots = {
         center["center_id"]: {
@@ -34,6 +74,13 @@ def get_slots_for_pincode(url, pincode, curr_date):
         for center in centers
         if center.get("sessions") and center["sessions"][0]["available_capacity"] > 0
     }
+
+    if config.CENTER_FILTER:
+        whitelisted_centers = [int(i) for i in config.CENTER_FILTER.split(",")]
+        centers_with_available_slots = {
+            k: v for k, v in centers_with_available_slots.items()
+            if int(k) in whitelisted_centers
+        }
 
     if not config.NOTIFIED_FOR_18_PLUS and config.CHECK_FOR_18_YRS:
         centers_with_slots_for_18_plus = {
@@ -55,17 +102,35 @@ def get_slots_for_pincode(url, pincode, curr_date):
         sys.exit(0)
 
 
-def check_slot_availability(pincode: str):
-    relative_url = "api/v2/appointment/sessions/calendarByPin"
+def check_slot_availability_by_district(district_id):
+    relative_url = "api/v2/appointment/sessions/public/calendarByDistrict"
     request_url = urljoin(BASE_URL, relative_url)
     start_date = arrow.utcnow().to("Asia/Kolkata")
     count = 0
     while count < 15:
         curr_date = start_date.shift(days=count)
         print(f"Checking for date: {curr_date}")
-        get_slots_for_pincode(
-            url=request_url, pincode=pincode, curr_date=curr_date.strftime("%d-%m-%Y")
+        response = make_covin_request(
+            request_url=request_url,
+            params={"district_id": district_id, "date": curr_date.strftime("%d-%m-%Y")}
         )
+        parse_slot_results(response)
+        count += 1
+
+
+def check_slot_availability_by_pincode(pincode: str):
+    relative_url = "api/v2/appointment/sessions/public/calendarByPin"
+    request_url = urljoin(BASE_URL, relative_url)
+    start_date = arrow.utcnow().shift(days=-1).to("Asia/Kolkata")
+    count = 0
+    while count < 15:
+        curr_date = start_date.shift(days=count)
+        print(f"Checking for date: {curr_date}")
+        response = make_covin_request(
+            request_url=request_url,
+            params={"pincode": pincode, "date": curr_date.strftime("%d-%m-%Y")},
+        )
+        parse_slot_results(response)
         count += 1
 
 
@@ -120,4 +185,25 @@ def send_message_for_vaccine_slots(centers_dict):
 
 
 if __name__ == "__main__":
-    check_slot_availability(config.ZIPCODE)
+    print("---------- START -----------")
+    if config.ZIPCODE:
+        check_slot_availability_by_pincode(config.ZIPCODE)
+        sys.exit(0)
+
+    if config.DISTRICT_ID:
+        check_slot_availability_by_district(config.DISTRICT_ID)
+        sys.exit(0)
+
+    print("One of ZIPCODE or DISTRICT_ID must be specified in config")
+
+    # Gets slot availability for district 392 and notifies if slots are available.
+    # check_slot_availability_by_district("392")
+
+    # Get slot availability for pincode 400706 and notifies if slots are available.
+    # check_slot_availability_by_pincode("400706")
+
+    # Prints all states (id and name map) - Useful to fetch state_id to list districts
+    # get_all_states
+
+    # Prints all districts in state 21 (id and name map)
+    # get_all_districts_for_state(21)
