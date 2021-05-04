@@ -3,8 +3,6 @@ from typing import List, Optional
 from slack import WebClient
 from slack.errors import SlackApiError
 
-import config
-
 
 def _fetch_open_slack_conversations(client: WebClient, slack_user_ids: List[str]):
     return client.conversations_open(users=slack_user_ids)
