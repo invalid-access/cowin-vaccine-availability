@@ -81,13 +81,6 @@ def parse_slot_results(response: requests.Response):
         if session["available_capacity"] > 0
     ]
 
-    if config.CENTER_FILTER:
-        whitelisted_centers = [int(i) for i in config.CENTER_FILTER.split(",")]
-        available_sessions_with_center_info = [
-            s for s in available_sessions_with_center_info
-            if int(s["center_id"]) in whitelisted_centers
-        ]
-
     if not config.NOTIFIED_FOR_18_PLUS and config.CHECK_FOR_18_YRS:
         sessions_with_slots_for_18_plus = [
             s for s in available_sessions_with_center_info
@@ -147,7 +140,21 @@ def send_message_for_vaccine_slots(sessions_list):
 
     send_info = db_utils.get_send_info()
 
+    whitelisted_centers = []
+    if config.PREFERRED_CENTER_FILTER:
+        whitelisted_centers = [int(i) for i in config.PREFERRED_CENTER_FILTER.split(",")]
+
     blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"Vaccination slots for age {min_age} plus are available in following centers"
+            }
+        }
+    ]
+
+    preferred_center_blocks = [
         {
             "type": "section",
             "text": {
@@ -187,6 +194,17 @@ def send_message_for_vaccine_slots(sessions_list):
             ]
         })
 
+        if whitelisted_centers and int(session_info["center_id"]) in whitelisted_centers:
+            preferred_center_blocks.append({
+                "type": "context",
+                "elements": [
+                    {
+                        "type": "plain_text",
+                        "text": f"{session_info['name']}({session_info['pincode']}) -> {session_info['available_capacity']} -> {session_info['vaccine']} -> {session_info['slot_date']}"
+                    }
+                ]
+            })
+
         send_info[session_id] = {
             "last_send_dt": str(arrow.utcnow()),
             "num_sends": send_info[session_id]["num_sends"] + 1,
@@ -212,6 +230,15 @@ def send_message_for_vaccine_slots(sessions_list):
         slack_channel_ids=slack_channel_ids,
         slack_user_ids=slack_user_ids,
     )
+
+    if len(preferred_center_blocks) > 1 and config.PREFERRED_CENTER_SLACK_ACCESS_TOKEN:
+        slack_utils.send_message(
+            access_token=config.PREFERRED_CENTER_SLACK_ACCESS_TOKEN,
+            text=f"Vaccination slots for age {min_age} plus are open!",
+            blocks=preferred_center_blocks,
+            slack_channel_ids=slack_channel_ids,
+            slack_user_ids=slack_user_ids,
+        )
 
     db_utils.set_send_info(send_info)
 
