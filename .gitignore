@@ -132,3 +132,4 @@ dmypy.json
 # Run script
 run.sh
 logs.txt
+data_store.json

@@ -5,6 +5,7 @@ from urllib.parse import urljoin
 import arrow
 
 import config
+import db_utils
 import slack_utils
 
 
@@ -64,38 +65,45 @@ def parse_slot_results(response: requests.Response):
         print("No centers found")
         return
 
-    centers_with_available_slots = {
-        center["center_id"]: {
+    available_sessions_with_center_info = [
+        {
+            "center_id": center["center_id"],
             "name": center["name"],
-            "available_capacity": center["sessions"][0]["available_capacity"],
-            "min_age_limit": center["sessions"][0]["min_age_limit"],
-            "vaccine": center["sessions"][0]["vaccine"],
+            "pincode": center["pincode"],
+            "session_id": session["session_id"],
+            "available_capacity": session["available_capacity"],
+            "slot_date": session["date"],
+            "min_age_limit": session["min_age_limit"],
+            "vaccine": session["vaccine"],
         }
         for center in centers
-        if center.get("sessions") and center["sessions"][0]["available_capacity"] > 0
-    }
+        for session in center.get("sessions") or []
+        if session["available_capacity"] > 0
+    ]
 
     if config.CENTER_FILTER:
         whitelisted_centers = [int(i) for i in config.CENTER_FILTER.split(",")]
-        centers_with_available_slots = {
-            k: v for k, v in centers_with_available_slots.items()
-            if int(k) in whitelisted_centers
-        }
+        available_sessions_with_center_info = [
+            s for s in available_sessions_with_center_info
+            if int(s["center_id"]) in whitelisted_centers
+        ]
 
     if not config.NOTIFIED_FOR_18_PLUS and config.CHECK_FOR_18_YRS:
-        centers_with_slots_for_18_plus = {
-            k: v for k, v in centers_with_available_slots.items() if v["min_age_limit"] == 18
-        }
-        if centers_with_slots_for_18_plus:
-            notify(centers_with_slots_for_18_plus)
+        sessions_with_slots_for_18_plus = [
+            s for s in available_sessions_with_center_info
+            if int(s["min_age_limit"]) == 18
+        ]
+        if sessions_with_slots_for_18_plus:
+            notify(sessions_with_slots_for_18_plus)
             config.NOTIFIED_FOR_18_PLUS = True
 
     if not config.NOTIFIED_FOR_45_PLUS and config.CHECK_FOR_45_YRS:
-        centers_with_slots_for_45_plus = {
-            k: v for k, v in centers_with_available_slots.items() if v["min_age_limit"] == 45
-        }
-        if centers_with_slots_for_45_plus:
-            notify(centers_with_slots_for_45_plus)
+        sessions_with_slots_for_45_plus = [
+            s for s in available_sessions_with_center_info
+            if int(s["min_age_limit"]) == 45
+        ]
+        if sessions_with_slots_for_45_plus:
+            notify(sessions_with_slots_for_45_plus)
             config.NOTIFIED_FOR_45_PLUS = True
 
     if config.NOTIFIED_FOR_18_PLUS and config.NOTIFIED_FOR_45_PLUS:
@@ -105,46 +113,39 @@ def parse_slot_results(response: requests.Response):
 def check_slot_availability_by_district(district_id):
     relative_url = "api/v2/appointment/sessions/public/calendarByDistrict"
     request_url = urljoin(BASE_URL, relative_url)
-    start_date = arrow.utcnow().to("Asia/Kolkata")
-    count = 0
-    while count < 15:
-        curr_date = start_date.shift(days=count)
-        print(f"Checking for date: {curr_date}")
-        response = make_covin_request(
-            request_url=request_url,
-            params={"district_id": district_id, "date": curr_date.strftime("%d-%m-%Y")}
-        )
-        parse_slot_results(response)
-        count += 1
+    curr_date = arrow.utcnow().to("Asia/Kolkata")
+    response = make_covin_request(
+        request_url=request_url,
+        params={"district_id": district_id, "date": curr_date.strftime("%d-%m-%Y")}
+    )
+    parse_slot_results(response)
 
 
 def check_slot_availability_by_pincode(pincode: str):
     relative_url = "api/v2/appointment/sessions/public/calendarByPin"
     request_url = urljoin(BASE_URL, relative_url)
-    start_date = arrow.utcnow().shift(days=-1).to("Asia/Kolkata")
-    count = 0
-    while count < 15:
-        curr_date = start_date.shift(days=count)
-        print(f"Checking for date: {curr_date}")
-        response = make_covin_request(
-            request_url=request_url,
-            params={"pincode": pincode, "date": curr_date.strftime("%d-%m-%Y")},
-        )
-        parse_slot_results(response)
-        count += 1
+    curr_date = arrow.utcnow().to("Asia/Kolkata")
+    response = make_covin_request(
+        request_url=request_url,
+        params={"pincode": pincode, "date": curr_date.strftime("%d-%m-%Y")},
+    )
+    parse_slot_results(response)
 
 
-def notify(centers_dict):
-    send_message_for_vaccine_slots(centers_dict)
+def notify(sessions_list):
+    send_message_for_vaccine_slots(sessions_list)
 
 
-def send_message_for_vaccine_slots(centers_dict):
+def send_message_for_vaccine_slots(sessions_list):
+    print(sessions_list)
     slack_access_token = config.SLACK_ACCESS_TOKEN
     if not slack_access_token:
         print("Skipping slack alert as no access token found in config")
         return
 
-    min_age = list(centers_dict.values())[0]['min_age_limit']
+    min_age = sessions_list[0]['min_age_limit']
+
+    send_info = db_utils.get_send_info()
 
     blocks = [
         {
@@ -156,16 +157,45 @@ def send_message_for_vaccine_slots(centers_dict):
         }
     ]
 
-    for center_id, center_metadata in centers_dict.items():
+    for session_info in sessions_list:
+        # Add to send_info it doesn't exist
+        session_id = session_info["session_id"]
+        if session_id not in send_info:
+            send_info[session_id] = {
+                "num_sends": 0
+            }
+
+        last_send_info = send_info[session_id]
+        if last_send_info["num_sends"] > 5:
+            last_send_dt = arrow.get(last_send_info["last_send_dt"])
+            if arrow.utcnow() < last_send_dt.shift(hours=1):
+                # Don't send notifications for a session more than 5 times in a 1 hour window.
+                continue
+
+            # Reset num_sends as rate limit doesn't apply here.
+            send_info[session_id] = {
+                "num_sends": 0
+            }
+
         blocks.append({
             "type": "context",
             "elements": [
                 {
                     "type": "plain_text",
-                    "text": f"{center_metadata['name']} -> {center_metadata['available_capacity']} -> {center_metadata['vaccine']}"
+                    "text": f"{session_info['name']}({session_info['pincode']}) -> {session_info['available_capacity']} -> {session_info['vaccine']} -> {session_info['slot_date']}"
                 }
             ]
         })
+
+        send_info[session_id] = {
+            "last_send_dt": str(arrow.utcnow()),
+            "num_sends": send_info[session_id]["num_sends"] + 1,
+            "center_name": session_info["name"],
+        }
+
+    if len(blocks) == 1:
+        print(f"No new notifications to send for {min_age}. Returning.")
+        return
 
     slack_channel_ids = []
     if config.SLACK_CHANNEL_ID:
@@ -183,9 +213,11 @@ def send_message_for_vaccine_slots(centers_dict):
         slack_user_ids=slack_user_ids,
     )
 
+    db_utils.set_send_info(send_info)
+
 
 if __name__ == "__main__":
-    print("---------- START -----------")
+    print(f"---------- START {arrow.utcnow().to('Asia/Kolkata')} -----------")
     if config.ZIPCODE:
         check_slot_availability_by_pincode(config.ZIPCODE)
         sys.exit(0)
