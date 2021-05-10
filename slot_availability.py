@@ -17,7 +17,11 @@ def make_covin_request(request_url, params=None) -> requests.Response:
     response = requests.get(
         request_url,
         params=params,
-        headers={"Accept": "application/json", "Accept-Language": "en-US"}
+        headers={
+            "Accept": "application/json", 
+            "Accept-Language": "en-US",
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.93 Safari/537.36"
+        }
     )
 
     while num_retries > 0:

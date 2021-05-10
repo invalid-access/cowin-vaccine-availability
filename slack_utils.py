@@ -55,7 +55,8 @@ def send_message(
             client=client,
             channel=channel,
             text=text,
-            blocks=blocks,
+            # Slack API limits to 50 blocks in array
+            blocks=blocks[:50], 
         )
     except SlackApiError as e:
         if e.response["error"] == "not_in_channel":
