@@ -82,7 +82,10 @@ def parse_slot_results(response: requests.Response):
         }
         for center in centers
         for session in center.get("sessions") or []
-        if session["available_capacity"] > 0
+        if (
+            (config.CHECK_FOR_DOSE1 and session["available_capacity_dose1"] > 0) or
+            (config.CHECK_FOR_DOSE2 and session["available_capacity_dose2"] > 0)
+        )
     ]
 
     if not config.NOTIFIED_FOR_18_PLUS and config.CHECK_FOR_18_YRS:
